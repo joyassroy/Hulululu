@@ -309,6 +309,7 @@ export default function Home() {
           </div>
           <div className="flex-1 overflow-y-auto custom-scrollbar">
             {registeredUsers.map(u => {
+              if (u.email === session?.user?.email) return null;
               const hideOnline = u.blockedUsers?.includes(session.user.email) || currentUserData?.blockedUsers?.includes(u.email);
               return (
               <div key={u._id} onClick={() => setActiveChat(u)} className={`flex items-center px-6 py-4 cursor-pointer border-b border-gray-50 transition-all ${activeChat?._id === u._id ? "bg-green-50/70 border-l-4 border-l-green-500" : "hover:bg-gray-50 border-l-4 border-l-transparent"}`}>

@@ -2,15 +2,13 @@ import { NextResponse } from "next/server";
 import { connectDB } from "@/lib/db";
 import { User } from "@/models/User";
 import bcrypt from "bcryptjs";
+import { pusherServer } from "@/lib/pusher";
 
 export async function POST(req) {
   try {
     await connectDB();
     const { name, email, password } = await req.json();
-    const newUser = await User.create({
-      name, email, password: hashedPassword,
-      image: `https://ui-avatars.com/api/?name=${name.replace(" ", "+")}&background=random`
-    });
+
     // চেক করা হচ্ছে ইউজার আগে থেকেই আছে কি না
     const existingUser = await User.findOne({ email });
     if (existingUser) {
@@ -19,9 +17,17 @@ export async function POST(req) {
 
     // পাসওয়ার্ড হ্যাশ (এনক্রিপ্ট) করা
     const hashedPassword = await bcrypt.hash(password, 10);
+    const safeName = name ? name.replace(" ", "+") : "User";
 
     // নতুন ইউজার তৈরি
-    
+    const newUser = await User.create({
+      name,
+      email,
+      password: hashedPassword,
+      image: `https://ui-avatars.com/api/?name=${safeName}&background=random`
+    });
+
+    // গ্লোবাল চ্যানেলে নতুন ইউজারের সিগন্যাল পাঠানো
     await pusherServer.trigger("hulululu-global", "new-user-joined", newUser);
 
     return NextResponse.json({ message: "অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে!", user: newUser });
