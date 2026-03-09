@@ -6,22 +6,27 @@ import { pusherServer } from "@/lib/pusher";
 export async function POST(req) {
   try {
     await connectDB();
-    const { chatId, senderEmail, senderName, text, image, time } = await req.json();
+    const data = await req.json();
 
-    // মডেলে যা আছে ঠিক সেই নামে ডাটা পাঠাতে হবে
     const newMessage = await Message.create({
-      chatId,
-      senderEmail,
-      senderName,
-      text,
-      image,
-      time
+      chatId: data.chatId,
+      senderEmail: data.senderEmail,
+      senderName: data.senderName,
+      text: data.text,
+      image: data.image,
+      time: data.time
     });
 
-    await pusherServer.trigger(chatId, "new-message", newMessage);
+    // ১. রানিং চ্যাট উইন্ডোর জন্য পুশার ট্রিগার
+    await pusherServer.trigger(data.chatId, "new-message", newMessage);
+
+    // ২. রিসিভারের পার্সোনাল চ্যানেলে নোটিফিকেশন পাঠানো (যাতে চ্যাট লিস্টের ওপরে চলে আসে)
+    await pusherServer.trigger(`user-${data.receiverEmail}`, "update-sidebar", { 
+        senderEmail: data.senderEmail 
+    });
+
     return NextResponse.json(newMessage);
   } catch (error) {
-    console.error("Message Save Error Detail:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
