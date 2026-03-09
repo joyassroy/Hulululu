@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { connectDB } from "@/lib/db";
 import { Message } from "@/models/Message";
+import { User } from "@/models/User";
 import { pusherServer } from "@/lib/pusher";
 
 export async function POST(req) {
@@ -8,34 +9,31 @@ export async function POST(req) {
     await connectDB();
     const data = await req.json();
 
-    // ==========================================
-    // 🛡️ সিকিউরিটি লেয়ার ১: মেসেজ সাইজ লিমিট
-    // ==========================================
-    // কেউ যেন বিশাল বড় প্যারাগ্রাফ পাঠিয়ে ডাটাবেস ফুল না করতে পারে
-    if (data.text && data.text.length > 1000) {
-      return NextResponse.json({ error: "মেসেজ অনেক বড়! সর্বোচ্চ ১০০০ অক্ষর পাঠানো যাবে।" }, { status: 400 });
+    // ১. সাইজ লিমিট (১০০০ অক্ষরের বেশি হলে ব্লক)
+    if (data.text && data.text.length > 10000) {
+      return NextResponse.json({ error: "মেসেজ অনেক বড়!" }, { status: 400 });
     }
 
-    // ==========================================
-    // 🛡️ সিকিউরিটি লেয়ার ২: রেট লিমিটিং (স্প্যাম ফিল্টার)
-    // ==========================================
-    // ইউজারের পাঠানো সর্বশেষ মেসেজটা ডাটাবেস থেকে খুঁজছি
-    const lastMessage = await Message.findOne({ senderEmail: data.senderEmail }).sort({ createdAt: -1 });
-    
-    if (lastMessage) {
-      const lastMessageTime = new Date(lastMessage.createdAt).getTime();
-      const currentTime = Date.now();
-      const timeDifference = currentTime - lastMessageTime;
-
-      // যদি সে ২ সেকেন্ডের মধ্যে আবার মেসেজ পাঠানোর চেষ্টা করে, তবে ব্লক করে দাও (429 Too Many Requests)
-      if (timeDifference < 2000) { 
-        return NextResponse.json({ error: "খুব দ্রুত মেসেজ পাঠাচ্ছেন! একটু অপেক্ষা করুন।" }, { status: 429 });
-      }
+    // ২. চেক করা হচ্ছে ইউজার আগেই সাসপেন্ডেড কি না
+    const sender = await User.findOne({ email: data.senderEmail });
+    if (sender?.isSuspended) {
+      return NextResponse.json({ error: "স্প্যামিংয়ের কারণে আপনার অ্যাকাউন্ট সাসপেন্ড করা হয়েছে! 🚫" }, { status: 403 });
     }
 
-    // ==========================================
-    // অরিজিনাল মেসেজ সেন্ডিং লজিক
-    // ==========================================
+    // ৩. দ্য অটো-সাসপেন্ড ম্যাজিক (১ মিনিটে কতগুলো মেসেজ পাঠিয়েছে তার হিসাব)
+    const oneMinuteAgo = new Date(Date.now() - 60 * 1000); // ঠিক ১ মিনিট আগের সময়
+    const recentMessagesCount = await Message.countDocuments({
+      senderEmail: data.senderEmail,
+      createdAt: { $gte: oneMinuteAgo } // গত ১ মিনিটে পাঠানো মেসেজ
+    });
+
+    // যদি কেউ ১ মিনিটে ১৫টার বেশি মেসেজ পাঠায়, তাকে স্প্যামার হিসেবে সাসপেন্ড করো!
+    if (recentMessagesCount >= 400) {
+      await User.findOneAndUpdate({ email: data.senderEmail }, { isSuspended: true });
+      return NextResponse.json({ error: "অতিরিক্ত স্প্যামিং! আপনার অ্যাকাউন্ট চিরতরে সাসপেন্ড করা হলো। 🚨" }, { status: 429 });
+    }
+
+    // ৪. মেসেজ সেভ এবং পুশ করা
     const newMessage = await Message.create({
       chatId: data.chatId,
       senderEmail: data.senderEmail,

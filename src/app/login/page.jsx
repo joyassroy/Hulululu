@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { Mail, Lock, User as UserIcon } from "lucide-react";
 import { signIn, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import { Turnstile } from "@marsidev/react-turnstile"; // 🔴 Cloudflare Turnstile ইমপোর্ট করা হলো
 
 export default function LoginPage() {
   const { data: session, status } = useSession();
@@ -14,8 +15,11 @@ export default function LoginPage() {
   const [authForm, setAuthForm] = useState({ name: "", email: "", password: "" });
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+  
+  // 🔴 বট চেকের টোকেন রাখার জন্য নতুন স্টেট
+  const [turnstileToken, setTurnstileToken] = useState(""); 
 
-  // যদি আগে থেকেই লগইন করা থাকে, তবে সরাসরি চ্যাট পেজে পাঠিয়ে দেবে
+  // যদি আগে থেকেই লগইন করা থাকে, তবে সরাসরি চ্যাট পেজে পাঠিয়ে দেবে
   useEffect(() => {
     if (session) {
       router.push("/");
@@ -32,25 +36,38 @@ export default function LoginPage() {
       if (res?.error) setAuthError(res.error);
       else router.push("/");
     } else {
+      // 🔴 রেজিস্ট্রেশনের সময় চেক করবে টোকেন আছে কি না
+      if (!turnstileToken) {
+        setAuthError("দয়া করে সিকিউরিটি চেক (Cloudflare) পূরণ করুন! 🤖🚫");
+        setAuthLoading(false);
+        return;
+      }
+
       try {
         const res = await fetch("/api/register", { 
             method: "POST", 
             headers: { "Content-Type": "application/json" }, 
-            body: JSON.stringify(authForm) 
+            // 🔴 authForm এর ডাটার সাথে turnstileToken টাও ব্যাকএন্ডে পাঠানো হচ্ছে
+            body: JSON.stringify({ ...authForm, turnstileToken }) 
         });
         const data = await res.json();
-        if (!res.ok) setAuthError(data.error || "রেজিস্ট্রেশন ব্যর্থ হয়েছে");
-        else {
+        
+        if (!res.ok) {
+            setAuthError(data.error || "রেজিস্ট্রেশন ব্যর্থ হয়েছে");
+        } else {
+            // রেজিস্ট্রেশন সফল হলে সাথে সাথে লগইন করিয়ে দেওয়া
             await signIn("credentials", { redirect: false, email: authForm.email, password: authForm.password });
             router.push("/");
         }
-      } catch (err) { setAuthError("সমস্যা হয়েছে!"); }
+      } catch (err) { 
+          setAuthError("সার্ভারে সমস্যা হয়েছে!"); 
+      }
     }
     setAuthLoading(false);
   };
 
   if (status === "loading") return <div className="h-screen flex items-center justify-center bg-[#f0f2f5]"><div className="w-10 h-10 border-4 border-green-500 border-t-transparent rounded-full animate-spin" /></div>;
-  if (session) return null; // রিডাইরেক্ট হওয়ার আগ মুহূর্ত পর্যন্ত ফাঁকা স্ক্রিন
+  if (session) return null; // রিডাইরেক্ট হওয়ার আগ মুহূর্ত পর্যন্ত ফাঁকা স্ক্রিন
 
   return (
     <div className="min-h-screen bg-[#f0f2f5] flex items-center justify-center p-4">
@@ -77,9 +94,20 @@ export default function LoginPage() {
             </div>
             <div className="relative group">
               <Lock className="absolute left-4 top-4 text-gray-400 group-focus-within:text-green-500 transition-colors" size={18} />
-              <input type="password" placeholder="পাসওয়ার্ড" required value={authForm.password} onChange={(e) => setAuthForm({...authForm, password: e.target.value})} className="w-full pl-12 pr-4 py-4 bg-gray-50 border rounded-2xl outline-none text-sm text-black focus:ring-2 focus:ring-green-400 transition-all" />
+              <input type="password" placeholder="পাসওয়ার্ড" required minLength={6} value={authForm.password} onChange={(e) => setAuthForm({...authForm, password: e.target.value})} className="w-full pl-12 pr-4 py-4 bg-gray-50 border rounded-2xl outline-none text-sm text-black focus:ring-2 focus:ring-green-400 transition-all" />
             </div>
-            <button type="submit" disabled={authLoading} className="w-full bg-green-600 hover:bg-green-700 text-white py-4 rounded-2xl font-bold shadow-lg shadow-green-200 transition-all disabled:opacity-50 active:scale-95">
+
+            {/* 🔴 Cloudflare Turnstile Widget (শুধু রেজিস্ট্রেশনের সময় দেখাবে) */}
+            {!isLogin && (
+              <div className="flex justify-center py-2">
+                <Turnstile 
+                  siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY} 
+                  onSuccess={(token) => setTurnstileToken(token)} 
+                />
+              </div>
+            )}
+
+            <button type="submit" disabled={authLoading || (!isLogin && !turnstileToken)} className="w-full bg-green-600 hover:bg-green-700 text-white py-4 rounded-2xl font-bold shadow-lg shadow-green-200 transition-all disabled:opacity-50 active:scale-95">
               {authLoading ? "অপেক্ষা করুন..." : (isLogin ? "লগইন করুন" : "রেজিস্ট্রেশন করুন")}
             </button>
           </form>
@@ -94,7 +122,7 @@ export default function LoginPage() {
             <img src="https://www.svgrepo.com/show/475656/google-color.svg" className="w-5 h-5" alt="Google" /> গুগল দিয়ে লগইন
           </button>
           
-          <button onClick={() => { setIsLogin(!isLogin); setAuthError(""); setAuthForm({ name: "", email: "", password: "" }); }} className="mt-6 text-sm text-green-600 hover:underline text-center font-medium w-full">
+          <button onClick={() => { setIsLogin(!isLogin); setAuthError(""); setAuthForm({ name: "", email: "", password: "" }); setTurnstileToken(""); }} className="mt-6 text-sm text-green-600 hover:underline text-center font-medium w-full">
               {isLogin ? "অ্যাকাউন্ট নেই? সাইন-আপ করুন" : "অ্যাকাউন্ট আছে? লগইন করুন"}
           </button>
         </div>
