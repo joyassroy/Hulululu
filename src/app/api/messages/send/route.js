@@ -17,13 +17,15 @@ export async function POST(req) {
       time: data.time
     });
 
-    // ১. রানিং চ্যাট উইন্ডোর জন্য পুশার ট্রিগার
     await pusherServer.trigger(data.chatId, "new-message", newMessage);
 
-    // ২. রিসিভারের পার্সোনাল চ্যানেলে নোটিফিকেশন পাঠানো (যাতে চ্যাট লিস্টের ওপরে চলে আসে)
-    await pusherServer.trigger(`user-${data.receiverEmail}`, "update-sidebar", { 
-        senderEmail: data.senderEmail 
-    });
+    if (data.receiverEmail) {
+      await pusherServer.trigger(`user-${data.receiverEmail}`, "update-sidebar", {
+        senderEmail: data.senderEmail,
+        senderName: data.senderName,
+        text: data.text // নতুন লাইন: সাইডবারে দেখানোর জন্য মেসেজ পাঠানো হচ্ছে
+      });
+    }
 
     return NextResponse.json(newMessage);
   } catch (error) {

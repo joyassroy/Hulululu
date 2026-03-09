@@ -1,13 +1,14 @@
 import mongoose from "mongoose";
 
 const messageSchema = new mongoose.Schema({
-  // এটি String দিতে হবে কারণ আমরা ইমেইল দিয়ে আইডি বানাচ্ছি
-  chatId: { type: String, required: true }, 
-  senderEmail: { type: String, required: true },
-  senderName: { type: String, required: true },
-  text: { type: String, default: "" },
-  image: { type: String, default: "" },
-  time: { type: String, required: true }
+  chatId: String,
+  senderEmail: String,
+  senderName: String,
+  receiverEmail: String,
+  text: String,
+  image: String,
+  time: String,
+  isRead: { type: Boolean, default: false } // এই নতুন লাইনটা অ্যাড করা হলো
 }, { timestamps: true });
 
 export const Message = mongoose.models.Message || mongoose.model("Message", messageSchema);
