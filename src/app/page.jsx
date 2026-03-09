@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Globe, LogOut, Search, MoreVertical, ArrowLeft, Smile, Paperclip, Send, X, Ban, Check, CheckCheck } from "lucide-react";
+import { Globe, LogOut, Search, MoreVertical, ArrowLeft, Smile, Paperclip, Send, X, Ban, Check, CheckCheck, Loader2 } from "lucide-react"; // Loader2 অ্যাড করা হলো
 import EmojiPicker from "emoji-picker-react";
 import { useSession, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
@@ -22,6 +22,7 @@ export default function Home() {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
   const [isTyping, setIsTyping] = useState(false);
+  const [isSending, setIsSending] = useState(false); // ছবি পাঠানোর সময় লোডিং দেখানোর জন্য নতুন স্টেট
 
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -35,7 +36,6 @@ export default function Home() {
     if (status === "unauthenticated") router.push("/login");
   }, [status, router]);
 
-  // একদম মডার্ন এবং ক্লিন নোটিফিকেশন সাউন্ড (শুধুমাত্র রিসিভ করলে বাজবে)
   const playNotificationSound = () => {
     const audio = new Audio("https://assets.mixkit.co/active_storage/sfx/951/951-preview.mp3");
     audio.play().catch(() => {});
@@ -65,7 +65,6 @@ export default function Home() {
     setRegisteredUsers(prev => prev.map(u => u.email === user.email ? { ...u, unread: 0 } : u));
   };
 
-  // ১. ইউজার লোড
   useEffect(() => {
     if (!session?.user?.email) return;
 
@@ -86,7 +85,6 @@ export default function Home() {
     };
   }, [session?.user?.email]);
 
-  // ২. গ্লোবাল পুশার
   useEffect(() => {
     if (!session?.user?.email) return;
 
@@ -117,10 +115,9 @@ export default function Home() {
 
     const myChannel = pusherClient.subscribe(`user-${session.user.email}`);
     myChannel.bind("update-sidebar", (data) => {
-      // যদি অন্য চ্যাটে থাকি, তখন সাউন্ড এবং টোস্ট হবে
       if (activeChatRef.current?.email !== data.senderEmail) {
         toast.success(`${data.senderName}: ${data.text || "ছবি পাঠিয়েছে"}`, { icon: '💬' });
-        playNotificationSound(); // সাউন্ড রিসিভ করার সময়
+        playNotificationSound(); 
         setRegisteredUsers(prev => prev.map(u => u.email === data.senderEmail ? { ...u, lastMessage: data.text || "📷 ছবি", unread: (u.unread || 0) + 1 } : u));
       } else {
         setRegisteredUsers(prev => prev.map(u => u.email === data.senderEmail ? { ...u, lastMessage: data.text || "📷 ছবি" } : u));
@@ -134,7 +131,6 @@ export default function Home() {
     };
   }, [session?.user?.email]);
 
-  // ৩. চ্যাট মেসেজ ও ব্লু টিক লিসেনার
   useEffect(() => {
     if (activeChat && session) {
       const chatId = [session.user.email, activeChat.email].sort().join("--");
@@ -162,7 +158,6 @@ export default function Home() {
         setMessages((prev) => Array.isArray(prev) ? [...prev, newMessage] : [newMessage]);
         bringUserToTop(newMessage.senderEmail);
         
-        // বর্তমান চ্যাটে থাকা অবস্থায় মেসেজ রিসিভ করলে সাউন্ড হবে
         playNotificationSound();
         
         if (activeChatRef.current?.email === newMessage.senderEmail) {
@@ -192,7 +187,6 @@ export default function Home() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
 
-  // ৪. ব্লক লজিক
   const currentUserData = registeredUsers.find(u => u.email === session?.user?.email);
   const iBlockedThem = currentUserData?.blockedUsers?.includes(activeChat?.email);
   const targetUserData = registeredUsers.find(u => u.email === activeChat?.email);
@@ -214,7 +208,6 @@ export default function Home() {
     } catch (err) { toast.error("সার্ভার এরর!"); }
   };
 
-  // ৫. মেসেজ সেন্ড
   const handleInputTyping = (e) => {
     setInputText(e.target.value);
     if (!activeChat || isBlocked) return;
@@ -237,36 +230,41 @@ export default function Home() {
 
   const handleSendMessage = async (e) => {
     e.preventDefault();
-    if (isBlocked || (!inputText.trim() && !selectedImage)) return;
+    if (isBlocked || isSending || (!inputText.trim() && !selectedImage)) return;
 
-    let finalImageUrl = "";
-    if (selectedImage && fileInputRef.current?.files[0]) {
-      try { finalImageUrl = await uploadImageToCloudinary(fileInputRef.current.files[0]); } 
-      catch (err) { return; }
-    }
-
-    const chatId = [session.user.email, activeChat.email].sort().join("--");
-    const newMessage = {
-      chatId, senderEmail: session.user.email, senderName: session.user.name, receiverEmail: activeChat.email, 
-      text: inputText, image: finalImageUrl, 
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      isRead: false // পাঠানোর সময় মেসেজ unread থাকবে
-    };
-
-    setRegisteredUsers(prev => prev.map(u => u.email === activeChat.email ? { ...u, lastMessage: inputText || "📷 ছবি" } : u));
-    setMessages((prev) => [...prev, newMessage]);
-    bringUserToTop(activeChat.email);
-    
-    const backupText = inputText;
-    setInputText("");
-    setSelectedImage(null);
-    setShowEmojiPicker(false);
-    
-    fetch("/api/typing", { method: "POST", body: JSON.stringify({ chatId, senderEmail: session.user.email, isTyping: false }) });
+    setIsSending(true); // মেসেজ পাঠানো শুরু হলে লোডিং অ্যানিমেশন চালু
 
     try {
+      let finalImageUrl = "";
+      if (selectedImage && fileInputRef.current?.files[0]) {
+        finalImageUrl = await uploadImageToCloudinary(fileInputRef.current.files[0]);
+      }
+
+      const chatId = [session.user.email, activeChat.email].sort().join("--");
+      const newMessage = {
+        chatId, senderEmail: session.user.email, senderName: session.user.name, receiverEmail: activeChat.email, 
+        text: inputText, image: finalImageUrl, 
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isRead: false 
+      };
+
+      setRegisteredUsers(prev => prev.map(u => u.email === activeChat.email ? { ...u, lastMessage: inputText || "📷 ছবি" } : u));
+      setMessages((prev) => [...prev, newMessage]);
+      bringUserToTop(activeChat.email);
+      
+      const backupText = inputText;
+      setInputText("");
+      setSelectedImage(null);
+      setShowEmojiPicker(false);
+      
+      fetch("/api/typing", { method: "POST", body: JSON.stringify({ chatId, senderEmail: session.user.email, isTyping: false }) });
+
       await fetch("/api/messages/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newMessage) });
-    } catch (error) { setInputText(backupText); }
+    } catch (error) {
+      toast.error("মেসেজ পাঠানো যায়নি!");
+    } finally {
+      setIsSending(false); // মেসেজ পাঠানো শেষ হলে লোডিং অফ
+    }
   };
 
   const t = {
@@ -361,8 +359,6 @@ export default function Home() {
               <div className="flex-1 overflow-y-auto p-4 md:p-6 flex flex-col gap-3 z-10 custom-scrollbar">
                 {Array.isArray(messages) && messages.map((m, i) => {
                   const isMe = m.senderEmail === session.user.email;
-                  
-                  // টিকমার্ক লজিক: 
                   const isSeen = m.isRead;
                   const isDelivered = activeChat?.isOnline && !isSeen; 
                   
@@ -429,8 +425,22 @@ export default function Home() {
                     <button type="button" onClick={() => setShowEmojiPicker(!showEmojiPicker)} className={`p-2 rounded-full transition-all flex-shrink-0 ${showEmojiPicker ? "bg-green-100 text-green-600" : "text-gray-400 hover:text-gray-600 hover:bg-gray-50"}`}><Smile size={22} /></button>
                     <button type="button" onClick={() => fileInputRef.current.click()} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-full transition-all flex-shrink-0"><Paperclip size={22} /></button>
                     <input type="file" className="hidden" ref={fileInputRef} accept="image/*" onChange={(e) => setSelectedImage(URL.createObjectURL(e.target.files[0]))} />
-                    <input type="text" value={inputText} onChange={handleInputTyping} placeholder={t.inputPlaceholder} className="flex-1 bg-transparent px-2 py-2 text-[15px] outline-none text-black font-medium placeholder-gray-400 min-w-0" />
-                    <button type="submit" disabled={!inputText.trim() && !selectedImage} className="w-10 h-10 md:w-11 md:h-11 flex-shrink-0 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white rounded-full flex items-center justify-center shadow-md active:scale-95 transition-all disabled:opacity-40 disabled:shadow-none disabled:from-gray-300 disabled:to-gray-300 disabled:text-gray-100"><Send size={18} className="ml-1 md:ml-0.5" /></button>
+                    
+                    {/* ইনপুট ফিল্ড পাঠানোর সময় ডিসেবল থাকবে না, কিন্তু লেখা চেঞ্জ করা যাবে না */}
+                    <input type="text" value={inputText} onChange={handleInputTyping} disabled={isSending} placeholder={isSending ? "পাঠানো হচ্ছে..." : t.inputPlaceholder} className="flex-1 bg-transparent px-2 py-2 text-[15px] outline-none text-black font-medium placeholder-gray-400 min-w-0 disabled:opacity-50" />
+                    
+                    {/* সেন্ড বাটনের অ্যানিমেশন লজিক */}
+                    <button 
+                      type="submit" 
+                      disabled={isSending || (!inputText.trim() && !selectedImage)} 
+                      className="w-10 h-10 md:w-11 md:h-11 flex-shrink-0 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white rounded-full flex items-center justify-center shadow-md active:scale-95 transition-all disabled:opacity-50 disabled:shadow-none disabled:from-gray-300 disabled:to-gray-300 disabled:text-gray-400"
+                    >
+                      {isSending ? (
+                        <Loader2 size={18} className="animate-spin" />
+                      ) : (
+                        <Send size={18} className="ml-1 md:ml-0.5" />
+                      )}
+                    </button>
                   </form>
                   {showEmojiPicker && <div className="absolute bottom-24 left-4 md:left-8 z-50 shadow-2xl rounded-2xl overflow-hidden border border-gray-100"><EmojiPicker onEmojiClick={(o) => setInputText(p => p + o.emoji)} searchDisabled skinTonesDisabled /></div>}
                 </div>
