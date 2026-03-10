@@ -33,12 +33,29 @@ export async function POST(req) {
     // ==========================================
     // 🕵️‍♂️ লেভেল ২: স্পাই সিস্টেম (IP, Device, Location)
     // ==========================================
-    const headersList =await headers();
-    const ip = headersList.get("x-forwarded-for") || "Unknown IP";
+    const headersList = await headers();
+    // Vercel এ অনেক সময় কমা দিয়ে মাল্টিপল আইপি আসে, তাই প্রথমটাই আসল আইপি
+    const rawIp = headersList.get("x-forwarded-for") || "Unknown IP";
+    const ip = rawIp.split(',')[0].trim(); 
     const userAgent = headersList.get("user-agent") || "Unknown Device";
     const city = headersList.get("x-vercel-ip-city") || "Unknown City";
     const country = headersList.get("x-vercel-ip-country") || "Unknown Country";
     const location = `${city}, ${country}`;
+
+    // ==========================================
+    // 🛡️ লেভেল ২.৫: Anti-Spam IP Limit (সর্বোচ্চ ৫টি অ্যাকাউন্ট)
+    // ==========================================
+    if (ip !== "Unknown IP") {
+      // ডাটাবেসে চেক করা হচ্ছে এই আইপিটা কয়জন ইউজারের ipAddresses অ্যারেতে আছে
+      const userCountByIp = await User.countDocuments({ ipAddresses: ip });
+      
+      if (userCountByIp >= 5) {
+        return NextResponse.json(
+          { error: "এই IP থেকে সর্বোচ্চ ৫টি অ্যাকাউন্ট খোলা সম্ভব! স্প্যামিং বন্ধ করুন। 🚫" }, 
+          { status: 403 }
+        );
+      }
+    }
 
     // চেক করা হচ্ছে ইউজার আগে থেকেই আছে কি না
     const existingUser = await User.findOne({ email });
@@ -56,7 +73,7 @@ export async function POST(req) {
       email,
       password: hashedPassword,
       image: `https://ui-avatars.com/api/?name=${safeName}&background=random`,
-      ipAddresses: [ip],
+      ipAddresses: [ip], // তোমার অ্যারে ফরম্যাট
       deviceInfo: [userAgent],
       lastLocation: location
     });
