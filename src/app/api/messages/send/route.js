@@ -4,21 +4,16 @@ import { connectDB } from "@/lib/db";
 import { Message } from "@/models/Message";
 import { User } from "@/models/User";
 import { pusherServer } from "@/lib/pusher";
-import { getServerSession } from "next-auth"; // 🔴 সব হ্যাকারের যম!
+import { getServerSession } from "next-auth";
 
-// 🔴 Upstash Redis এবং Ratelimit ইমপোর্ট
 import { Redis } from "@upstash/redis";
 import { Ratelimit } from "@upstash/ratelimit";
 
-// ==========================================
-// 🛡️ লেভেল ০: Redis কানেকশন ও রুলস (DDoS Protection)
-// ==========================================
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL,
   token: process.env.UPSTASH_REDIS_REST_TOKEN,
 });
 
-// স্মার্ট রেট লিমিট: ১ মিনিটে ১২০ টার বেশি API হিট করলেই আইপি ব্লক!
 const ratelimit = new Ratelimit({
   redis: redis,
   limiter: Ratelimit.slidingWindow(25, "1 m"), 
@@ -26,9 +21,6 @@ const ratelimit = new Ratelimit({
 
 export async function POST(req) {
   try {
-    // ==========================================
-    // 🛡️ লেভেল ০.৫: Redis দিয়ে আইপি (IP) ব্লক করা
-    // ==========================================
     const headersList = await headers(); 
     const ip = headersList.get("x-forwarded-for") || "127.0.0.1";
 
@@ -48,12 +40,7 @@ export async function POST(req) {
       );
     }
 
-    // ==========================================
-    // 🛡️ লেভেল ১: সেশন ভেরিফিকেশন (The Ultimate Block)
-    // ==========================================
-    // চেক করা হচ্ছে রিকোয়েস্টটা আসলেই কোনো লগইন করা ইউজারের ব্রাউজার থেকে আসছে কি না
     const session = await getServerSession();
-    
     if (!session || !session.user) {
       return NextResponse.json({ error: "Unauthorized! হ্যাকিংয়ের চেষ্টা করবেন না! 🚫" }, { status: 401 });
     }
@@ -61,30 +48,51 @@ export async function POST(req) {
     await connectDB();
     const data = await req.json();
 
-    // ==========================================
-    // 🛡️ লেভেল ২: আইডেন্টিটি থেফট প্রোটেকশন
-    // ==========================================
-    // হ্যাকার যদি অন্য কারও ইমেইল বসিয়ে মেসেজ পাঠাতে চায়, তবে সেটা ব্লক করবে
     if (session.user.email !== data.senderEmail) {
       return NextResponse.json({ error: "Fake identity detected! 🚨" }, { status: 403 });
     }
 
     // ==========================================
-    // 🛡️ লেভেল ৩: সাইজ লিমিট
+    // 🛡️ নতুন লেভেল: Same Text Detection (Constant Bombing)
     // ==========================================
+    // একই টেক্সট ১০ বার পাঠালে অ্যাকাউন্ট সাসপেন্ড হবে
+    const lastMsgKey = `last_msg_${session.user.email}`;
+    const repeatCountKey = `repeat_count_${session.user.email}`;
+
+    const lastMsgContent = await redis.get(lastMsgKey);
+
+    if (lastMsgContent === data.text) {
+      const count = await redis.incr(repeatCountKey);
+      
+      if (count >= 10) {
+        // ১০ বার হয়ে গেলে ডাটাবেসে সাসপেন্ড করে দাও
+        await User.findOneAndUpdate({ email: session.user.email }, { isSuspended: true });
+        
+        // Redis তথ্য মুছে দাও
+        await redis.del(lastMsgKey);
+        await redis.del(repeatCountKey);
+
+        return NextResponse.json(
+          { error: "একই টেক্সট ১০ বার পাঠানোর জন্য আপনার অ্যাকাউন্ট সাসপেন্ড করা হলো! 🚫" }, 
+          { status: 429 } // ৪২৯ দিলে ফ্রন্টএন্ডে সেই বিশেষ স্ক্রিন আসবে
+        );
+      }
+    } else {
+      // যদি টেক্সট আলাদা হয়, তবে কাউন্টার ১ এ রিসেট করো
+      await redis.set(lastMsgKey, data.text);
+      await redis.set(repeatCountKey, 1);
+    }
+    // ==========================================
+
     if (data.text && data.text.length > 1000) {
       return NextResponse.json({ error: "মেসেজ অনেক বড়!" }, { status: 400 });
     }
 
-    // ==========================================
-    // 🛡️ লেভেল ৪: অটো-সাসপেন্ড (ডাটাবেস ভিত্তিক চেক)
-    // ==========================================
     const sender = await User.findOne({ email: data.senderEmail });
     if (sender?.isSuspended) {
-      return NextResponse.json({ error: "স্প্যামিংয়ের কারণে আপনার অ্যাকাউন্ট সাসপেন্ড করা হয়েছে! 🚫" }, { status: 403 });
+      return NextResponse.json({ error: "স্প্যামিংয়ের কারণে আপনার অ্যাকাউন্ট সাসপেন্ড করা হয়েছে! 🚫" }, { status: 429 });
     }
 
-    // ১ মিনিটে ১৫ টার বেশি মেসেজ পাঠালে অ্যাকাউন্ট চিরতরে সাসপেন্ড!
     const oneMinuteAgo = new Date(Date.now() - 60 * 1000);
     const recentMessagesCount = await Message.countDocuments({
       senderEmail: data.senderEmail,
@@ -96,9 +104,6 @@ export async function POST(req) {
       return NextResponse.json({ error: "অতিরিক্ত স্প্যামিং! আপনার অ্যাকাউন্ট চিরতরে সাসপেন্ড করা হলো। 🚨" }, { status: 429 });
     }
 
-    // ==========================================
-    // ✅ সব সিকিউরিটি পাস করার পর মেসেজ সেভ এবং পুশ করা
-    // ==========================================
     const newMessage = await Message.create({
       chatId: data.chatId,
       senderEmail: data.senderEmail,
