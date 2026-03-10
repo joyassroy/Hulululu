@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Globe, LogOut, Search, MoreVertical, ArrowLeft, Smile, Paperclip, Send, X, Ban, Check, CheckCheck, Loader2 } from "lucide-react"; // Loader2 অ্যাড করা হলো
+import { Globe, LogOut, Search, MoreVertical, ArrowLeft, Smile, Paperclip, Send, X, Ban, Check, CheckCheck, Loader2, Skull } from "lucide-react"; 
 import EmojiPicker from "emoji-picker-react";
 import { useSession, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
@@ -22,12 +22,14 @@ export default function Home() {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
   const [isTyping, setIsTyping] = useState(false);
-  const [isSending, setIsSending] = useState(false); // ছবি পাঠানোর সময় লোডিং দেখানোর জন্য নতুন স্টেট
+  const [isSending, setIsSending] = useState(false); 
+  const [isSuspended, setIsSuspended] = useState(false); // 🔴 সাসপেন্ডেড স্টেট
 
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const activeChatRef = useRef(activeChat);
+  const inputRef = useRef(null);
 
   useEffect(() => { setIsMounted(true); }, []);
   useEffect(() => { activeChatRef.current = activeChat; }, [activeChat]);
@@ -62,7 +64,9 @@ export default function Home() {
 
   const handleChatSelect = (user) => {
     setActiveChat(user);
+    localStorage.setItem("activeChatEmail", user.email);
     setRegisteredUsers(prev => prev.map(u => u.email === user.email ? { ...u, unread: 0 } : u));
+    setTimeout(() => inputRef.current?.focus(), 100);
   };
 
   useEffect(() => {
@@ -70,7 +74,15 @@ export default function Home() {
 
     fetch("/api/users")
       .then((res) => res.json())
-      .then((data) => setRegisteredUsers(Array.isArray(data) ? data : []));
+      .then((data) => {
+        const usersList = Array.isArray(data) ? data : [];
+        setRegisteredUsers(usersList);
+        const savedEmail = localStorage.getItem("activeChatEmail");
+        if (savedEmail) {
+          const chatToRestore = usersList.find(u => u.email === savedEmail);
+          if (chatToRestore) setActiveChat(chatToRestore);
+        }
+      });
 
     const updateStatus = (isOnline) => {
       fetch("/api/status", { method: "POST", body: JSON.stringify({ email: session.user.email, isOnline }) });
@@ -138,7 +150,6 @@ export default function Home() {
         .then(res => res.json())
         .then(data => {
           setMessages(Array.isArray(data) ? data : []);
-          
           fetch("/api/messages/read", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -157,9 +168,7 @@ export default function Home() {
       if (newMessage.senderEmail !== session.user.email) {
         setMessages((prev) => Array.isArray(prev) ? [...prev, newMessage] : [newMessage]);
         bringUserToTop(newMessage.senderEmail);
-        
         playNotificationSound();
-        
         if (activeChatRef.current?.email === newMessage.senderEmail) {
           fetch("/api/messages/read", {
             method: "POST",
@@ -232,7 +241,7 @@ export default function Home() {
     e.preventDefault();
     if (isBlocked || isSending || (!inputText.trim() && !selectedImage)) return;
 
-    setIsSending(true); // মেসেজ পাঠানো শুরু হলে লোডিং অ্যানিমেশন চালু
+    setIsSending(true);
 
     try {
       let finalImageUrl = "";
@@ -259,11 +268,28 @@ export default function Home() {
       
       fetch("/api/typing", { method: "POST", body: JSON.stringify({ chatId, senderEmail: session.user.email, isTyping: false }) });
 
-      await fetch("/api/messages/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newMessage) });
+      const res = await fetch("/api/messages/send", { 
+        method: "POST", 
+        headers: { "Content-Type": "application/json" }, 
+        body: JSON.stringify(newMessage) 
+      });
+
+      // 🔴 হ্যাকার শনাক্ত করার লজিক
+      if (!res.ok) {
+        if (res.status === 429) {
+           setIsSuspended(true); // 🚨 অ্যাকাউন্ট সাসপেন্ডেড UI দেখাবে
+           return;
+        }
+        const data = await res.json();
+        toast.error(data.error || "Error!");
+        setMessages((prev) => prev.slice(0, -1)); 
+      }
+
     } catch (error) {
-      toast.error("মেসেজ পাঠানো যায়নি!");
+      toast.error("মেসেজ পাঠানো যায়নি!");
     } finally {
-      setIsSending(false); // মেসেজ পাঠানো শেষ হলে লোডিং অফ
+      setIsSending(false); 
+      setTimeout(() => inputRef.current?.focus(), 50);
     }
   };
 
@@ -275,8 +301,37 @@ export default function Home() {
   if (!isMounted || status === "loading" || !session) return <div className="h-screen flex items-center justify-center bg-[#f0f2f5]"><div className="w-10 h-10 border-4 border-green-500 border-t-transparent rounded-full animate-spin" /></div>;
 
   return (
-    <div className="flex h-screen bg-[#f0f2f5] md:p-6 font-sans">
+    <div className="flex h-screen bg-[#f0f2f5] md:p-6 font-sans relative">
       <Toaster position="top-right" reverseOrder={false} /> 
+
+      {/* 🚨 সাসপেন্ডেড হ্যাকার UI (Overlay) */}
+      <AnimatePresence>
+        {isSuspended && (
+          <motion.div 
+            initial={{ opacity: 0 }} 
+            animate={{ opacity: 1 }} 
+            className="absolute inset-0 z-[999] bg-black flex flex-col items-center justify-center text-center p-6"
+          >
+            <motion.div 
+              initial={{ scale: 0.5 }} 
+              animate={{ scale: 1 }} 
+              transition={{ type: "spring", stiffness: 200 }}
+              className="bg-red-600 p-8 rounded-3xl shadow-[0_0_50px_rgba(220,38,38,0.5)] border-4 border-white/20"
+            >
+              <Skull size={100} className="text-white mx-auto mb-6 animate-pulse" />
+              <h1 className="text-white text-3xl md:text-5xl font-black mb-4 uppercase tracking-tighter">
+                Access Denied!
+              </h1>
+              <p className="text-white text-xl md:text-2xl font-bold italic bg-black/40 px-6 py-4 rounded-xl border border-white/10">
+                "Dom he to hack karke dekhaa bokachodaaa"
+              </p>
+              <div className="mt-8 text-red-200 text-sm font-mono animate-bounce">
+                IP Blocked by System Security 🛡️
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-[1600px] mx-auto h-full bg-white md:rounded-[32px] shadow-2xl flex overflow-hidden">
         
@@ -301,7 +356,6 @@ export default function Home() {
             {registeredUsers.map(u => {
               if (u.email === session?.user?.email) return null;
               const hideOnline = u.blockedUsers?.includes(session.user.email) || currentUserData?.blockedUsers?.includes(u.email);
-              
               return (
               <div key={u._id} onClick={() => handleChatSelect(u)} className={`flex items-center px-6 py-4 cursor-pointer border-b border-gray-50 transition-all ${activeChat?._id === u._id ? "bg-green-50/70 border-l-4 border-l-green-500" : "hover:bg-gray-50 border-l-4 border-l-transparent"}`}>
                 <div className="relative">
@@ -329,12 +383,11 @@ export default function Home() {
         {/* চ্যাট এরিয়া */}
         <div className={`flex-1 bg-[#E5DDD5] relative flex-col overflow-hidden ${!activeChat ? 'hidden md:flex' : 'flex'}`}>
           <div className="absolute inset-0 opacity-10 pointer-events-none bg-[url('https://i.pinimg.com/originals/ab/ab/60/abab60f0bc0006e20f20c951da3588da.jpg')] bg-repeat" />
-          
           {activeChat ? (
             <>
               <div className="h-20 bg-white/95 backdrop-blur-md px-4 md:px-8 flex items-center justify-between border-b border-gray-200 z-10 shadow-sm">
                 <div className="flex items-center gap-3">
-                  <button onClick={() => setActiveChat(null)} className="md:hidden p-2 -ml-2 text-gray-500 hover:bg-gray-100 rounded-full transition-all"><ArrowLeft size={24} /></button>
+                  <button onClick={() => { setActiveChat(null); localStorage.removeItem("activeChatEmail"); }} className="md:hidden p-2 -ml-2 text-gray-500 hover:bg-gray-100 rounded-full transition-all"><ArrowLeft size={24} /></button>
                   <img src={activeChat.image || `https://ui-avatars.com/api/?name=${activeChat.name}`} className="w-10 h-10 rounded-full border border-gray-200 object-cover" alt="Friend" />
                   <div>
                     <h2 className="font-bold text-gray-800 text-sm tracking-tight">{activeChat.name}</h2>
@@ -345,7 +398,6 @@ export default function Home() {
                     )}
                   </div>
                 </div>
-                
                 <div className="flex items-center gap-1">
                   {iBlockedThem ? (
                     <button onClick={() => handleBlockAction('unblock')} className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 text-xs font-bold rounded-full transition-all border border-red-100 flex items-center gap-1 shadow-sm"><Ban size={14} /> Unblock</button>
@@ -361,13 +413,11 @@ export default function Home() {
                   const isMe = m.senderEmail === session.user.email;
                   const isSeen = m.isRead;
                   const isDelivered = activeChat?.isOnline && !isSeen; 
-                  
                   return (
                   <motion.div key={i} initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className={`flex flex-col max-w-[85%] md:max-w-[70%] ${isMe ? "self-end" : "self-start"}`}>
                     <div className={`px-4 py-2.5 rounded-2xl shadow-sm text-sm relative ${isMe ? "bg-[#D9FDD3] text-gray-800 rounded-tr-none" : "bg-white text-gray-800 rounded-tl-none"}`}>
                       {m.image && <img src={m.image} className="rounded-xl mb-2 max-h-64 w-full object-cover shadow-sm border border-green-100" alt="attachment" />}
                       <p className="leading-relaxed text-black text-[15px]">{m.text}</p>
-                      
                       <span className="text-[9px] text-gray-500 mt-1 flex justify-end items-center gap-1 font-medium">
                         {m.time}
                         {isMe && (
@@ -379,7 +429,6 @@ export default function Home() {
                     </div>
                   </motion.div>
                 )})}
-                
                 <AnimatePresence>
                     {isTyping && !isBlocked && (
                         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9 }} className="self-start mt-2">
@@ -425,21 +474,13 @@ export default function Home() {
                     <button type="button" onClick={() => setShowEmojiPicker(!showEmojiPicker)} className={`p-2 rounded-full transition-all flex-shrink-0 ${showEmojiPicker ? "bg-green-100 text-green-600" : "text-gray-400 hover:text-gray-600 hover:bg-gray-50"}`}><Smile size={22} /></button>
                     <button type="button" onClick={() => fileInputRef.current.click()} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-full transition-all flex-shrink-0"><Paperclip size={22} /></button>
                     <input type="file" className="hidden" ref={fileInputRef} accept="image/*" onChange={(e) => setSelectedImage(URL.createObjectURL(e.target.files[0]))} />
-                    
-                    {/* ইনপুট ফিল্ড পাঠানোর সময় ডিসেবল থাকবে না, কিন্তু লেখা চেঞ্জ করা যাবে না */}
-                    <input type="text" value={inputText} onChange={handleInputTyping} disabled={isSending} placeholder={isSending ? "পাঠানো হচ্ছে..." : t.inputPlaceholder} className="flex-1 bg-transparent px-2 py-2 text-[15px] outline-none text-black font-medium placeholder-gray-400 min-w-0 disabled:opacity-50" />
-                    
-                    {/* সেন্ড বাটনের অ্যানিমেশন লজিক */}
+                    <input ref={inputRef} type="text" value={inputText} onChange={handleInputTyping} disabled={isSending} placeholder={isSending ? "পাঠানো হচ্ছে..." : t.inputPlaceholder} className="flex-1 bg-transparent px-2 py-2 text-[15px] outline-none text-black font-medium placeholder-gray-400 min-w-0 disabled:opacity-50" />
                     <button 
                       type="submit" 
                       disabled={isSending || (!inputText.trim() && !selectedImage)} 
                       className="w-10 h-10 md:w-11 md:h-11 flex-shrink-0 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white rounded-full flex items-center justify-center shadow-md active:scale-95 transition-all disabled:opacity-50 disabled:shadow-none disabled:from-gray-300 disabled:to-gray-300 disabled:text-gray-400"
                     >
-                      {isSending ? (
-                        <Loader2 size={18} className="animate-spin" />
-                      ) : (
-                        <Send size={18} className="ml-1 md:ml-0.5" />
-                      )}
+                      {isSending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} className="ml-1 md:ml-0.5" />}
                     </button>
                   </form>
                   {showEmojiPicker && <div className="absolute bottom-24 left-4 md:left-8 z-50 shadow-2xl rounded-2xl overflow-hidden border border-gray-100"><EmojiPicker onEmojiClick={(o) => setInputText(p => p + o.emoji)} searchDisabled skinTonesDisabled /></div>}

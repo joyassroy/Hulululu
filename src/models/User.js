@@ -9,7 +9,10 @@ const userSchema = new mongoose.Schema({
   lastSeen: { type: Date, default: Date.now },
   blockedUsers: { type: [String], default: [] },
   // 🔴 নতুন সিকিউরিটি ফিল্ড
-  isSuspended: { type: Boolean, default: false } 
+  isSuspended: { type: Boolean, default: false } ,
+  ipAddresses: { type: [String], default: [] }, // Array, karon ekjon user phone/pc theke dhukte pare
+deviceInfo: { type: [String], default: [] },
+lastLocation: { type: String, default: "Unknown Location" },
 }, { timestamps: true });
 
 export const User = mongoose.models.User || mongoose.model("User", userSchema);
