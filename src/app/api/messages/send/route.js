@@ -53,33 +53,33 @@ export async function POST(req) {
     }
 
     // ==========================================
-    // 🛡️ নতুন লেভেল: Same Text Detection (Constant Bombing)
+    // 🛡️ নতুন লেভেল: Content Bombing Detection (Text + Image)
     // ==========================================
-    // একই টেক্সট ১০ বার পাঠালে অ্যাকাউন্ট সাসপেন্ড হবে
-    const lastMsgKey = `last_msg_${session.user.email}`;
+    // একই টেক্সট বা একই ইমেজ ১০ বার পাঠালে অ্যাকাউন্ট সাসপেন্ড হবে
+    const currentMsgFingerprint = `${data.text || ""}_${data.image || ""}`; // টেক্সট আর ইমেজ লিঙ্ক দিয়ে ফিঙ্গারপ্রিন্ট
+    const lastMsgKey = `last_msg_fingerprint_${session.user.email}`;
     const repeatCountKey = `repeat_count_${session.user.email}`;
 
-    const lastMsgContent = await redis.get(lastMsgKey);
+    const lastMsgFingerprint = await redis.get(lastMsgKey);
 
-    if (lastMsgContent === data.text) {
+    if (lastMsgFingerprint === currentMsgFingerprint) {
       const count = await redis.incr(repeatCountKey);
       
       if (count >= 10) {
-        // ১০ বার হয়ে গেলে ডাটাবেসে সাসপেন্ড করে দাও
+        // ১০ বার সেইম কন্টেন্ট হয়ে গেলে সাসপেন্ড!
         await User.findOneAndUpdate({ email: session.user.email }, { isSuspended: true });
         
-        // Redis তথ্য মুছে দাও
         await redis.del(lastMsgKey);
         await redis.del(repeatCountKey);
 
         return NextResponse.json(
-          { error: "একই টেক্সট ১০ বার পাঠানোর জন্য আপনার অ্যাকাউন্ট সাসপেন্ড করা হলো! 🚫" }, 
-          { status: 429 } // ৪২৯ দিলে ফ্রন্টএন্ডে সেই বিশেষ স্ক্রিন আসবে
+          { error: "স্প্যামিংয়ের জন্য আপনার অ্যাকাউন্ট সাসপেন্ড করা হলো! 🚫" }, 
+          { status: 429 } // ৪২৯ দিলে ফ্রন্টএন্ডে সেই বিশেষ লাল স্ক্রিন আসবে
         );
       }
     } else {
-      // যদি টেক্সট আলাদা হয়, তবে কাউন্টার ১ এ রিসেট করো
-      await redis.set(lastMsgKey, data.text);
+      // যদি কন্টেন্ট আলাদা হয়, তবে ফিঙ্গারপ্রিন্ট আপডেট করো এবং কাউন্টার ১ এ রিসেট করো
+      await redis.set(lastMsgKey, currentMsgFingerprint);
       await redis.set(repeatCountKey, 1);
     }
     // ==========================================
