@@ -104,6 +104,8 @@ export async function POST(req) {
 
     // 🔴 যদি ডাটাবেসে থাকে কিন্তু সাসপেন্ডেড হয়
     if (sender.isSuspended) {
+      // সাসপেন্ড করার পর সাথে সাথে তার সব আগের মেসেজ মুছে ফেলা
+await Message.deleteMany({ senderEmail: session.user.email });
       return NextResponse.json({ error: "স্প্যামিংয়ের কারণে আপনার অ্যাকাউন্ট সাসপেন্ড করা হয়েছে! 🚫" }, { status: 429 });
     }
     // ==========================================
