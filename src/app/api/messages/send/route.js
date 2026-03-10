@@ -56,7 +56,7 @@ export async function POST(req) {
     // 🛡️ নতুন লেভেল: Content Bombing Detection (Text + Image)
     // ==========================================
     // একই টেক্সট বা একই ইমেজ ১০ বার পাঠালে অ্যাকাউন্ট সাসপেন্ড হবে
-    const currentMsgFingerprint = `${data.text || ""}_${data.image || ""}`; // টেক্সট আর ইমেজ লিঙ্ক দিয়ে ফিঙ্গারপ্রিন্ট
+    const currentMsgFingerprint = `${data.text || ""}_${data.image || ""}`; // টেক্সট আর ইমেজ লিঙ্ক দিয়ে ফিঙ্গারপ্রিন্ট
     const lastMsgKey = `last_msg_fingerprint_${session.user.email}`;
     const repeatCountKey = `repeat_count_${session.user.email}`;
 
@@ -66,19 +66,19 @@ export async function POST(req) {
       const count = await redis.incr(repeatCountKey);
       
       if (count >= 10) {
-        // ১০ বার সেইম কন্টেন্ট হয়ে গেলে সাসপেন্ড!
+        // ১০ বার সেইম কন্টেন্ট হয়ে গেলে সাসপেন্ড!
         await User.findOneAndUpdate({ email: session.user.email }, { isSuspended: true });
         
         await redis.del(lastMsgKey);
         await redis.del(repeatCountKey);
 
         return NextResponse.json(
-          { error: "স্প্যামিংয়ের জন্য আপনার অ্যাকাউন্ট সাসপেন্ড করা হলো! 🚫" }, 
+          { error: "স্প্যামিংয়ের জন্য আপনার অ্যাকাউন্ট সাসপেন্ড করা হলো! 🚫" }, 
           { status: 429 } // ৪২৯ দিলে ফ্রন্টএন্ডে সেই বিশেষ লাল স্ক্রিন আসবে
         );
       }
     } else {
-      // যদি কন্টেন্ট আলাদা হয়, তবে ফিঙ্গারপ্রিন্ট আপডেট করো এবং কাউন্টার ১ এ রিসেট করো
+      // যদি কন্টেন্ট আলাদা হয়, তবে ফিঙ্গারপ্রিন্ট আপডেট করো এবং কাউন্টার ১ এ রিসেট করো
       await redis.set(lastMsgKey, currentMsgFingerprint);
       await redis.set(repeatCountKey, 1);
     }
@@ -88,10 +88,25 @@ export async function POST(req) {
       return NextResponse.json({ error: "মেসেজ অনেক বড়!" }, { status: 400 });
     }
 
+    // ==========================================
+    // 👻 ঘোস্ট ডিটেক্টর: স্প্যামার কি ডাটাবেসে আছে?
+    // ==========================================
     const sender = await User.findOne({ email: data.senderEmail });
-    if (sender?.isSuspended) {
+    
+    // 🔴 যদি ডাটাবেসে ইউজার না থাকে (মানে ডিলিট করা হয়েছে)
+    if (!sender) {
+      console.warn(`🚨 Ghost Spammer Blocked: ${data.senderEmail}`);
+      return NextResponse.json(
+        { error: "আপনার অ্যাকাউন্ট মুছে ফেলা হয়েছে! Ghosting বন্ধ করুন। 👻🚫" }, 
+        { status: 401 } // 401 Unauthorized
+      );
+    }
+
+    // 🔴 যদি ডাটাবেসে থাকে কিন্তু সাসপেন্ডেড হয়
+    if (sender.isSuspended) {
       return NextResponse.json({ error: "স্প্যামিংয়ের কারণে আপনার অ্যাকাউন্ট সাসপেন্ড করা হয়েছে! 🚫" }, { status: 429 });
     }
+    // ==========================================
 
     const oneMinuteAgo = new Date(Date.now() - 60 * 1000);
     const recentMessagesCount = await Message.countDocuments({
