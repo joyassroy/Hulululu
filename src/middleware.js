@@ -5,12 +5,16 @@ const BLOCKED_IPS = [];
 // 🟢 নতুন লজিক: শুধুমাত্র এই লিংকগুলো থেকেই API তে ঢোকা যাবে!
 const ALLOWED_ORIGINS = [
   "http://localhost:3000",
-  "https://hulululu.vercel.app/", // ⚠️ এখানে তোমার আসল Vercel ডোমেইনটা বসাবে
-  "https://www.hulululu.vercel.app"
+  "https://hulululu.vercel.app/login", // ⚠️ এখানে তোমার আসল Vercel ডোমেইনটা বসাবে
+  "https://hulululu.vercel.app/login",
+  "https://www.hulululu.vercel.app",
 ];
 
 export function middleware(req) {
-
+    const { pathname } = req.nextUrl;
+    if (pathname.startsWith('/api/auth')) {
+    return NextResponse.next();
+  }
   const ip = req.ip || req.headers.get('x-forwarded-for') || 'Unknown IP';
   const userAgent = req.headers.get('user-agent') || 'Unknown Device';
   // 🟢 নতুন লজিক: রিকোয়েস্ট কোথা থেকে আসছে সেটা বের করা
